@@ -3,31 +3,53 @@ use std::io::Write;
 
 fn main() {
     let mut out = std::io::stdout();
-    let board = Board::new();
+    let board = History::new();
     for turn in 0..=17 {
-        board.print(turn, &mut out).unwrap();
+        let position = board.get_position(turn).unwrap();
+        position.print(&mut out).unwrap();
         writeln!(&mut out).unwrap();
     }
 }
 
-struct Board {
-    spots: u64,
-    pieces: u64,
+struct Position {
+    board_pieces: u64,
+    board_mask: u16,
+    selected_piece: Option<Piece>,
 }
 
-impl Board {
+impl Position {
     fn new() -> Self {
         Self {
-            spots: 0xFEDCBA9876543210,
-            pieces: 0xFEDCBA9876543210,
+            selected_piece: None,
+            board_pieces: 0,
+            board_mask: 0,
         }
     }
 
-    fn try_move(&mut self, turn: u32, mv: Move) -> Result<Valid, Invalid> {
-        todo!()
+    fn get_piece(&self, row: u32, col: u32) -> Option<Piece> {
+        let row_col = col | (row << 2);
+        if (self.board_mask >> row_col) & 1 != 0 {
+            Some(Piece((self.board_pieces >> (4 * row_col)) as u32))
+        } else {
+            None
+        }
     }
 
-    /// Print the board given the turn
+    fn place_piece(&mut self, row: u32, col: u32, piece: Piece) {
+        let row_col = col | (row << 2);
+        self.board_mask |= 1 << row_col;
+        self.board_pieces |= (piece.0 as u64) << (4 * row_col);
+    }
+
+    fn get_selected_piece(&self) -> Option<Piece> {
+        self.selected_piece
+    }
+
+    fn select_piece(&mut self, piece: Piece) {
+        self.selected_piece = Some(piece);
+    }
+
+    /// Print the position
     ///
     /// The format looks like this
     /// . | x y z w
@@ -50,38 +72,67 @@ impl Board {
     ///
     /// A quarto is shown as a Q in the top-left corner.
     ///
-    fn print(&self, turn: u32, writer: &mut dyn io::Write) -> Result<(), io::Error> {
-        let mut grid = [[None; 4]; 4];
-        for i in 1..turn {
-            let rc = (self.spots >> (4 * (i - 1))) as usize;
-            let c = rc & 0x3;
-            let r = (rc >> 2) & 0x3;
-            grid[r][c] = Some(Piece((self.pieces >> (4 * (i - 1))) as u32 & 0xF));
-        }
-
+    fn print(&self, writer: &mut dyn io::Write) -> Result<(), io::Error> {
         let row_headers = ['s', 't', 'u', 'v'];
         writeln!(
             writer,
             "{} | x y z w",
-            option_piece_to_char(&self.selected_piece(turn))
+            option_piece_to_char(&self.get_selected_piece())
         )?;
         writeln!(writer, "--|--------")?;
-        for r in 0..4 {
-            write!(writer, "{} |", row_headers[r])?;
-            for c in 0..4 {
-                write!(writer, " {}", option_piece_to_char(&grid[r][c]))?;
+        for row in 0..4 {
+            write!(writer, "{} |", row_headers[row])?;
+            for col in 0..4 {
+                write!(
+                    writer,
+                    " {}",
+                    option_piece_to_char(&self.get_piece(row as u32, col as u32))
+                )?;
             }
             writeln!(writer)?;
         }
         Ok(())
     }
+}
 
-    fn selected_piece(&self, turn: u32) -> Option<Piece> {
-        if turn > 0 && turn <= 16 {
-            Some(Piece((self.pieces >> (4 * (turn - 1)) & 0xF) as u32))
-        } else {
-            None
+struct History {
+    spots_permut: u64,
+    pieces_permut: u64,
+}
+
+impl History {
+    fn new() -> Self {
+        Self {
+            spots_permut: 0xFEDCBA9876543210,
+            pieces_permut: 0xFEDCBA9876543210,
         }
+    }
+
+    fn try_move(&mut self, turn: u32, mv: Move) -> Result<Valid, Invalid> {
+        todo!()
+    }
+
+    fn get_position(&self, turn: u32) -> Option<Position> {
+        if turn > 17 {
+            return None;
+        }
+
+        let mut pos = Position::new();
+
+        if turn > 0 {
+            for i in 0..(turn - 1) {
+                let row_col = (self.spots_permut >> (4 * i)) as u32 & 0xF;
+                let row = row_col >> 2;
+                let col = row_col & 0x3;
+                let piece = Piece((self.pieces_permut >> (4 * i)) as u32 & 0xF);
+                pos.place_piece(row, col, piece);
+            }
+            if turn < 17 {
+                pos.select_piece(Piece((self.pieces_permut >> (4 * (turn - 1))) as u32 & 0xF));
+            }
+        }
+
+        Some(pos)
     }
 }
 
