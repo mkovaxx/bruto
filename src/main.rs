@@ -1,13 +1,51 @@
-use std::io;
-use std::io::Write;
+use std::io::{self, Write};
 
-fn main() {
-    let mut out = std::io::stdout();
-    let board = History::new();
-    for turn in 0..=17 {
-        let position = board.get_position(turn).unwrap();
-        position.print(&mut out).unwrap();
-        writeln!(&mut out).unwrap();
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut input = std::io::stdin();
+    let mut output = std::io::stdout();
+
+    let mut engine = Rando::new();
+
+    loop {
+        write!(output, "> ")?;
+        output.flush()?;
+        let mut input_line = String::new();
+        let count = input.read_line(&mut input_line)?;
+        if count == 0 {
+            break;
+        }
+        write!(output, "{}", input_line)?;
+    }
+
+    Ok(())
+}
+
+trait Player {
+    fn start(&mut self) -> Move;
+    fn op_move(&mut self, mv: &Move) -> Move;
+}
+
+struct Rando {
+    history: History,
+    position: Position,
+}
+
+impl Rando {
+    fn new() -> Self {
+        Self {
+            history: History::new(),
+            position: Position::new(),
+        }
+    }
+}
+
+impl Player for Rando {
+    fn start(&mut self) -> Move {
+        todo!()
+    }
+
+    fn op_move(&mut self, mv: &Move) -> Move {
+        todo!()
     }
 }
 
@@ -176,12 +214,6 @@ enum Valid {}
 enum Invalid {}
 
 struct Move {
-    spot: Option<SpotIndex>,
-    piece: PieceIndex,
+    spot: Option<Spot>,
+    piece: Option<Piece>,
 }
-
-#[derive(Debug, Clone, Copy)]
-struct PieceIndex(u32);
-
-#[derive(Debug, Clone, Copy)]
-struct SpotIndex(u32);
