@@ -6,18 +6,103 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut engine = Rando::new();
 
+    let mut position = Position::new();
     loop {
         write!(output, "> ")?;
         output.flush()?;
         let mut input_line = String::new();
-        let count = input.read_line(&mut input_line)?;
-        if count == 0 {
+        let _count = input.read_line(&mut input_line)?;
+        if input_line.starts_with("exit") {
             break;
         }
-        write!(output, "{}", input_line)?;
+        match parse_move(&input_line) {
+            Ok(mv) => {
+                writeln!(output, "OK: {:?}", mv)?;
+                if let (Some(piece), Some(spot)) = (position.get_chosen_piece(), mv.spot) {
+                    position.place_piece(spot, piece);
+                }
+                position.choose_piece(mv.piece);
+                position.print(&mut output)?;
+            }
+            Err(err) => {
+                writeln!(output, "ERROR: {:?}", err)?;
+            }
+        }
     }
 
     Ok(())
+}
+
+#[derive(Debug)]
+struct Move {
+    spot: Option<Spot>,
+    piece: Option<Piece>,
+}
+
+#[derive(Debug)]
+enum ParseError {
+    TooShort,
+    InvalidRow,
+    InvalidColumn,
+    RowColumnMismatch,
+    InvalidPiece,
+}
+
+fn parse_move(text: &str) -> Result<Move, ParseError> {
+    if text.len() < 3 {
+        return Err(ParseError::TooShort);
+    }
+    let chars: Vec<char> = text.chars().take(3).collect();
+    let spot = parse_spot(chars[0], chars[1])?;
+    let piece = parse_piece(chars[2])?;
+    Ok(Move { spot, piece })
+}
+
+fn parse_spot(r: char, c: char) -> Result<Option<Spot>, ParseError> {
+    let row = match r {
+        's' => Some(0),
+        't' => Some(1),
+        'u' => Some(2),
+        'v' => Some(3),
+        '.' => None,
+        _ => return Err(ParseError::InvalidRow),
+    };
+    let col = match c {
+        'w' => Some(0),
+        'x' => Some(1),
+        'y' => Some(2),
+        'z' => Some(3),
+        '.' => None,
+        _ => return Err(ParseError::InvalidColumn),
+    };
+    match (row, col) {
+        (Some(row), Some(col)) => Ok(Some(Spot::from_row_col(row, col))),
+        (None, None) => Ok(None),
+        _ => Err(ParseError::RowColumnMismatch),
+    }
+}
+
+fn parse_piece(p: char) -> Result<Option<Piece>, ParseError> {
+    match p {
+        '0' => Ok(Some(Piece(0x0))),
+        '1' => Ok(Some(Piece(0x1))),
+        '2' => Ok(Some(Piece(0x2))),
+        '3' => Ok(Some(Piece(0x3))),
+        '4' => Ok(Some(Piece(0x4))),
+        '5' => Ok(Some(Piece(0x5))),
+        '6' => Ok(Some(Piece(0x6))),
+        '7' => Ok(Some(Piece(0x7))),
+        '8' => Ok(Some(Piece(0x8))),
+        '9' => Ok(Some(Piece(0x9))),
+        'A' => Ok(Some(Piece(0xA))),
+        'B' => Ok(Some(Piece(0xB))),
+        'C' => Ok(Some(Piece(0xC))),
+        'D' => Ok(Some(Piece(0xD))),
+        'E' => Ok(Some(Piece(0xE))),
+        'F' => Ok(Some(Piece(0xF))),
+        '.' => Ok(None),
+        _ => Err(ParseError::InvalidPiece),
+    }
 }
 
 trait Player {
@@ -64,33 +149,31 @@ impl Position {
         }
     }
 
-    fn get_piece(&self, row: u32, col: u32) -> Option<Piece> {
-        let row_col = col | (row << 2);
-        if (self.board_mask >> row_col) & 1 != 0 {
-            Some(Piece((self.board_pieces >> (4 * row_col)) as u32))
+    fn get_piece(&self, spot: Spot) -> Option<Piece> {
+        if (self.board_mask >> spot.0) & 1 != 0 {
+            Some(Piece((self.board_pieces >> (4 * spot.0)) as u32))
         } else {
             None
         }
     }
 
-    fn place_piece(&mut self, row: u32, col: u32, piece: Piece) {
-        let row_col = col | (row << 2);
-        self.board_mask |= 1 << row_col;
-        self.board_pieces |= (piece.0 as u64) << (4 * row_col);
+    fn place_piece(&mut self, spot: Spot, piece: Piece) {
+        self.board_mask |= 1 << spot.0;
+        self.board_pieces |= (piece.0 as u64) << (4 * spot.0);
     }
 
-    fn get_selected_piece(&self) -> Option<Piece> {
+    fn get_chosen_piece(&self) -> Option<Piece> {
         self.selected_piece
     }
 
-    fn select_piece(&mut self, piece: Piece) {
-        self.selected_piece = Some(piece);
+    fn choose_piece(&mut self, piece: Option<Piece>) {
+        self.selected_piece = piece;
     }
 
     /// Print the position
     ///
     /// The format looks like this
-    /// . | x y z w
+    /// . | w x y z
     /// --|--------
     /// s | . . . .
     /// t | . . . .
@@ -100,7 +183,7 @@ impl Position {
     /// The top-left corner shows the selected piece that the current player must place in a spot.
     /// Each piece is shown as the hexadecimal digit of its bit pattern.
     /// Each spot on the board is identified by a row and a column label.
-    /// Row labels are s-v, and column labels are x-w.
+    /// Row labels are s-v, and column labels are w-x.
     ///
     /// Empty spots are shown as dots.
     ///
@@ -114,18 +197,15 @@ impl Position {
         let row_headers = ['s', 't', 'u', 'v'];
         writeln!(
             writer,
-            "{} | x y z w",
-            option_piece_to_char(&self.get_selected_piece())
+            "{} | w x y z",
+            option_piece_to_char(&self.get_chosen_piece())
         )?;
         writeln!(writer, "--|--------")?;
         for row in 0..4 {
             write!(writer, "{} |", row_headers[row])?;
             for col in 0..4 {
-                write!(
-                    writer,
-                    " {}",
-                    option_piece_to_char(&self.get_piece(row as u32, col as u32))
-                )?;
+                let spot = Spot::from_row_col(row as u32, col as u32);
+                write!(writer, " {}", option_piece_to_char(&self.get_piece(spot)))?;
             }
             writeln!(writer)?;
         }
@@ -134,15 +214,15 @@ impl Position {
 }
 
 struct History {
-    spots_permut: u64,
     pieces_permut: u64,
+    spots_permut: u64,
 }
 
 impl History {
     fn new() -> Self {
         Self {
-            spots_permut: 0xFEDCBA9876543210,
             pieces_permut: 0xFEDCBA9876543210,
+            spots_permut: 0xFEDCBA9876543210,
         }
     }
 
@@ -150,27 +230,33 @@ impl History {
         todo!()
     }
 
-    fn get_position(&self, turn: u32) -> Option<Position> {
-        if turn > 17 {
-            return None;
+    fn get_piece(&self, turn: u32) -> Option<Piece> {
+        if turn >= 1 && turn <= 16 {
+            Some(Piece((self.pieces_permut >> (4 * (turn - 1))) as u32 & 0xF))
+        } else {
+            None
         }
+    }
 
+    fn get_spot(&self, turn: u32) -> Option<Spot> {
+        if turn >= 2 && turn <= 17 {
+            Some(Spot((self.spots_permut >> (4 * (turn - 2))) as u32 & 0xF))
+        } else {
+            None
+        }
+    }
+
+    fn get_position(&self, turn: u32) -> Position {
         let mut pos = Position::new();
 
-        if turn > 0 {
-            for i in 0..(turn - 1) {
-                let row_col = (self.spots_permut >> (4 * i)) as u32 & 0xF;
-                let row = row_col >> 2;
-                let col = row_col & 0x3;
-                let piece = Piece((self.pieces_permut >> (4 * i)) as u32 & 0xF);
-                pos.place_piece(row, col, piece);
-            }
-            if turn < 17 {
-                pos.select_piece(Piece((self.pieces_permut >> (4 * (turn - 1))) as u32 & 0xF));
+        for i in 0..turn {
+            if let (Some(piece), Some(spot)) = (self.get_piece(turn), self.get_spot(turn)) {
+                pos.place_piece(spot, piece);
             }
         }
+        pos.choose_piece(self.get_piece(turn));
 
-        Some(pos)
+        pos
     }
 }
 
@@ -209,11 +295,12 @@ fn option_piece_to_char(option_piece: &Option<Piece>) -> char {
 #[derive(Debug, Clone, Copy)]
 struct Spot(u32);
 
+impl Spot {
+    fn from_row_col(row: u32, col: u32) -> Spot {
+        Spot(col | (row << 2))
+    }
+}
+
 enum Valid {}
 
 enum Invalid {}
-
-struct Move {
-    spot: Option<Spot>,
-    piece: Option<Piece>,
-}
