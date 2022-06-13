@@ -136,7 +136,7 @@ impl Player for Rando {
 
 struct Position {
     board_pieces: u64,
-    board_mask: u16,
+    board_mask: u64,
     selected_piece: Option<Piece>,
 }
 
@@ -150,7 +150,7 @@ impl Position {
     }
 
     fn get_piece(&self, spot: Spot) -> Option<Piece> {
-        if (self.board_mask >> spot.0) & 1 != 0 {
+        if (self.board_mask >> (4 * spot.0)) & 0xF != 0 {
             Some(Piece((self.board_pieces >> (4 * spot.0)) as u32))
         } else {
             None
@@ -158,7 +158,7 @@ impl Position {
     }
 
     fn place_piece(&mut self, spot: Spot, piece: Piece) {
-        self.board_mask |= 1 << spot.0;
+        self.board_mask |= 0xF << (4 * spot.0);
         self.board_pieces |= (piece.0 as u64) << (4 * spot.0);
     }
 
@@ -168,6 +168,46 @@ impl Position {
 
     fn choose_piece(&mut self, piece: Option<Piece>) {
         self.selected_piece = piece;
+    }
+
+    fn is_quarto(&self) -> bool {
+        let group_masks = [
+            // rows
+            0x0000_0000_0000_FFFF,
+            0x0000_0000_FFFF_0000,
+            0x0000_FFFF_0000_0000,
+            0xFFFF_0000_0000_0000,
+            // columns
+            0x000F_000F_000F_000F,
+            0x00F0_00F0_00F0_00F0,
+            0x0F00_0F00_0F00_0F00,
+            0xF000_F000_F000_F000,
+            // diagonals
+            0xF000_0F00_00F0_000F,
+            0x000F_00F0_0F00_F000,
+        ];
+
+        let attrib_masks = [
+            0x1111_1111_1111_1111,
+            0x2222_2222_2222_2222,
+            0x4444_4444_4444_4444,
+            0x8888_8888_8888_8888,
+        ];
+
+        for group_mask in group_masks {
+            if self.board_mask & group_mask != group_mask {
+                continue;
+            }
+            let slice = self.board_pieces & group_mask;
+            let not_slice = !self.board_pieces & group_mask;
+            for attrib_mask in attrib_masks {
+                if slice & attrib_mask == 0 || not_slice & attrib_mask == 0 {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /// Print the position
@@ -191,15 +231,16 @@ impl Position {
     /// Similarly, there is no selected piece in a draw (when the board is full).
     /// These states are also indicated by a dot in the top-left corner.
     ///
-    /// A quarto is shown as a Q in the top-left corner.
+    /// A quarto is shown as a * in the top-left corner.
     ///
     fn print(&self, writer: &mut dyn io::Write) -> Result<(), io::Error> {
         let row_headers = ['s', 't', 'u', 'v'];
-        writeln!(
-            writer,
-            "{} | w x y z",
+        let top_left = if self.is_quarto() {
+            '*'
+        } else {
             option_piece_to_char(&self.get_chosen_piece())
-        )?;
+        };
+        writeln!(writer, "{} | w x y z", top_left,)?;
         writeln!(writer, "--|--------")?;
         for row in 0..4 {
             write!(writer, "{} |", row_headers[row])?;
