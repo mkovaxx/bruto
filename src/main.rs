@@ -1,7 +1,7 @@
 use std::io::{self, Write};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut input = std::io::stdin();
+    let input = std::io::stdin();
     let mut output = std::io::stdout();
 
     let mut engine = Rando::new();
