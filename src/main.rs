@@ -1,4 +1,7 @@
-use std::io::{self, Write};
+use std::{
+    io::{self, Write},
+    num::Wrapping,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let input = std::io::stdin();
@@ -299,6 +302,10 @@ impl History {
 
         pos
     }
+
+    fn randomize(&mut self, turn: u32, random_source: u64) {
+        todo!()
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -345,3 +352,55 @@ impl Spot {
 enum Valid {}
 
 enum Invalid {}
+
+/// The initial/default state to initialize the Pcg struct with
+const INIT_STATE: u64 = 0x853c_49e6_748f_ea9b;
+
+/// The initial/default incrementing value to initialize the Pcg struct with
+const INIT_INC: u64 = 0xda3e_39cb_94b9_5bdb;
+
+/// The value to multiply the state with when a random number is generated in order to
+/// alter the random number generator's state
+const INCREMENTOR: u64 = 6_364_136_223_846_793_005;
+
+/// 16!
+const SIXTEEN_FACTORIAL: u64 = 20_922_789_888_000;
+
+/// Largest k such that k * 16! <= 2^64
+const LARGEST_MULTIPLE: u64 = 881657;
+
+/// Taken from the PCG crate, version 4.1.0
+struct Pcg {
+    state: u64,
+    inc: u64,
+}
+
+impl Pcg {
+    fn new() -> Pcg {
+        Pcg {
+            state: INIT_STATE,
+            inc: INIT_INC,
+        }
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let old_state = self.state;
+        self.state = (Wrapping(old_state) * Wrapping(INCREMENTOR) + Wrapping(self.inc)).0;
+        let xor_shifted = (old_state >> 18) ^ old_state >> 27;
+
+        // need to cast to i64 to allow the `-` operator (casting between integers of
+        // the same size is a no-op)
+        let rot = (old_state >> 59) as i64;
+        (xor_shifted >> rot as u64) | (xor_shifted << ((-rot) & 31))
+    }
+
+    /// Generate a uniform random number from [0, 16!)
+    fn rand_16_fact(&mut self) -> u64 {
+        loop {
+            let n = self.next_u64();
+            if n < LARGEST_MULTIPLE * SIXTEEN_FACTORIAL {
+                return n % SIXTEEN_FACTORIAL;
+            }
+        }
+    }
+}
