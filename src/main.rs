@@ -11,8 +11,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut pcg = Pcg::new();
 
-    let mut history = History::new();
-    random_playout(&mut history, 0, pcg.rand_16_fact(), pcg.rand_16_fact());
+    let mut noms = [0, 0];
+    let mut den = 0;
+
+    const N: u32 = 1_000_000;
+
+    for _i in 0..N {
+        let mut history = History::new();
+        let result = random_playout(&mut history, 0, pcg.rand_16_fact(), pcg.rand_16_fact());
+
+        //println!("result: {:?}", result);
+
+        /*
+        if result == None {
+            for turn in 0..=17 {
+                let pos = history.get_position(turn);
+                pos.print(&mut output).unwrap();
+                println!();
+            }
+        }
+        */
+        if let Some(turn) = result {
+            noms[turn as usize & 1] += 1;
+        }
+    }
+
+    println!("win:  {}", noms[0] as f64 / N as f64);
+    println!("lose: {}", noms[1] as f64 / N as f64);
+    println!("draw: {}", (N - noms[0] - noms[1]) as f64 / N as f64);
 
     /*
     let mut position = Position::new();
@@ -335,20 +361,22 @@ fn random_playout(
         // TODO(mkovaxx): optimize away unpacking the history by updating the position with just the next move
         let position = history.get_position(i);
 
+        /*
         position.print(&mut std::io::stdout()).unwrap();
         println!();
+        */
 
         if position.is_quarto() {
             return Some(i);
         }
-        if i < 16 {
+        if i <= 15 {
             // pick and commit piece
             let free_piece_count = 16 - i as u64;
             let piece_index = (piece_random_source % free_piece_count) as u8;
             piece_random_source /= free_piece_count;
             history.swap_pieces(i, i + piece_index);
         }
-        if i > 0 {
+        if i >= 1 && i <= 16 {
             // pick and commit spot
             let free_spot_count = 17 - i as u64;
             let spot_index = (spot_random_source % free_spot_count) as u8;
