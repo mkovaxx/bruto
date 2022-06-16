@@ -9,6 +9,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut engine = Rando::new();
 
+    let mut pcg = Pcg::new();
+
+    let mut history = History::new();
+    random_playout(&mut history, 0, pcg.rand_16_fact(), pcg.rand_16_fact());
+
+    /*
     let mut position = Position::new();
     loop {
         write!(output, "> ")?;
@@ -32,6 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+    */
 
     Ok(())
 }
@@ -154,14 +161,14 @@ impl Position {
 
     fn get_piece(&self, spot: Spot) -> Option<Piece> {
         if (self.board_mask >> (4 * spot.0)) & 0xF != 0 {
-            Some(Piece((self.board_pieces >> (4 * spot.0)) as u32))
+            Some(Piece((self.board_pieces >> (4 * spot.0)) as u8 & 0xF))
         } else {
             None
         }
     }
 
     fn place_piece(&mut self, spot: Spot, piece: Piece) {
-        self.board_mask |= 0xF << (4 * spot.0);
+        self.board_mask |= (0xF as u64) << (4 * spot.0);
         self.board_pieces |= (piece.0 as u64) << (4 * spot.0);
     }
 
@@ -248,7 +255,7 @@ impl Position {
         for row in 0..4 {
             write!(writer, "{} |", row_headers[row])?;
             for col in 0..4 {
-                let spot = Spot::from_row_col(row as u32, col as u32);
+                let spot = Spot::from_row_col(row as u8, col as u8);
                 write!(writer, " {}", option_piece_to_char(&self.get_piece(spot)))?;
             }
             writeln!(writer)?;
@@ -258,61 +265,106 @@ impl Position {
 }
 
 struct History {
-    pieces_permut: u64,
-    spots_permut: u64,
+    pieces_permut: [u8; 16],
+    spots_permut: [u8; 16],
 }
 
 impl History {
     fn new() -> Self {
         Self {
-            pieces_permut: 0xFEDCBA9876543210,
-            spots_permut: 0xFEDCBA9876543210,
+            pieces_permut: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+            spots_permut: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
         }
     }
 
-    fn try_move(&mut self, turn: u32, mv: Move) -> Result<Valid, Invalid> {
+    fn try_move(&mut self, turn: u8, mv: Move) -> Result<Valid, Invalid> {
         todo!()
     }
 
-    fn get_piece(&self, turn: u32) -> Option<Piece> {
+    fn get_piece(&self, turn: u8) -> Option<Piece> {
         if turn >= 1 && turn <= 16 {
-            Some(Piece((self.pieces_permut >> (4 * (turn - 1))) as u32 & 0xF))
+            Some(Piece(self.pieces_permut[turn as usize - 1]))
         } else {
             None
         }
     }
 
-    fn get_spot(&self, turn: u32) -> Option<Spot> {
+    fn swap_pieces(&mut self, index_0: u8, index_1: u8) {
+        let piece_0 = self.pieces_permut[index_0 as usize];
+        let piece_1 = self.pieces_permut[index_1 as usize];
+        self.pieces_permut[index_0 as usize] = piece_1;
+        self.pieces_permut[index_1 as usize] = piece_0;
+    }
+
+    fn get_spot(&self, turn: u8) -> Option<Spot> {
         if turn >= 2 && turn <= 17 {
-            Some(Spot((self.spots_permut >> (4 * (turn - 2))) as u32 & 0xF))
+            Some(Spot(self.spots_permut[turn as usize - 2]))
         } else {
             None
         }
     }
 
-    fn get_position(&self, turn: u32) -> Position {
+    fn swap_spots(&mut self, index_0: u8, index_1: u8) {
+        let spot_0 = self.spots_permut[index_0 as usize];
+        let spot_1 = self.spots_permut[index_1 as usize];
+        self.spots_permut[index_0 as usize] = spot_1;
+        self.spots_permut[index_1 as usize] = spot_0;
+    }
+
+    fn get_position(&self, turn: u8) -> Position {
         let mut pos = Position::new();
 
-        for i in 0..turn {
-            if let (Some(piece), Some(spot)) = (self.get_piece(turn), self.get_spot(turn)) {
+        for i in 0..=turn {
+            if let (Some(piece), Some(spot)) = (pos.get_chosen_piece(), self.get_spot(i)) {
                 pos.place_piece(spot, piece);
             }
+            pos.choose_piece(self.get_piece(i));
         }
-        pos.choose_piece(self.get_piece(turn));
 
         pos
     }
+}
 
-    fn randomize(&mut self, turn: u32, random_source: u64) {
-        todo!()
+fn random_playout(
+    history: &mut History,
+    turn: u8,
+    mut piece_random_source: u64,
+    mut spot_random_source: u64,
+) -> Option<u8> {
+    for i in turn..=17 {
+        // TODO(mkovaxx): optimize away unpacking the history by updating the position with just the next move
+        let position = history.get_position(i);
+
+        position.print(&mut std::io::stdout()).unwrap();
+        println!();
+
+        if position.is_quarto() {
+            return Some(i);
+        }
+        if i < 16 {
+            // pick and commit piece
+            let free_piece_count = 16 - i as u64;
+            let piece_index = (piece_random_source % free_piece_count) as u8;
+            piece_random_source /= free_piece_count;
+            history.swap_pieces(i, i + piece_index);
+        }
+        if i > 0 {
+            // pick and commit spot
+            let free_spot_count = 17 - i as u64;
+            let spot_index = (spot_random_source % free_spot_count) as u8;
+            spot_random_source /= free_spot_count;
+            history.swap_spots(i - 1, i - 1 + spot_index);
+        }
     }
+
+    None
 }
 
 #[derive(Debug, Clone, Copy)]
-struct Piece(u32);
+struct Piece(u8);
 
 fn piece_to_char(piece: &Piece) -> char {
-    match piece.0 & 0xF {
+    match piece.0 {
         0x0 => '0',
         0x1 => '1',
         0x2 => '2',
@@ -341,10 +393,10 @@ fn option_piece_to_char(option_piece: &Option<Piece>) -> char {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct Spot(u32);
+struct Spot(u8);
 
 impl Spot {
-    fn from_row_col(row: u32, col: u32) -> Spot {
+    fn from_row_col(row: u8, col: u8) -> Spot {
         Spot(col | (row << 2))
     }
 }
