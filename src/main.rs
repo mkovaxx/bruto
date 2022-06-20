@@ -14,15 +14,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut noms = [0, 0];
     let mut den = 0;
 
-    const N: u32 = 1_000_000;
+    /*
+    const N: u32 = 50;
 
     for _i in 0..N {
         let mut history = History::new();
         let result = random_playout(&mut history, 0, pcg.rand_16_fact(), pcg.rand_16_fact());
 
-        //println!("result: {:?}", result);
-
-        /*
         if result == None {
             for turn in 0..=17 {
                 let pos = history.get_position(turn);
@@ -30,7 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!();
             }
         }
-        */
+
         if let Some(turn) = result {
             noms[turn as usize & 1] += 1;
         }
@@ -39,8 +37,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("win:  {}", noms[0] as f64 / N as f64);
     println!("lose: {}", noms[1] as f64 / N as f64);
     println!("draw: {}", (N - noms[0] - noms[1]) as f64 / N as f64);
+    */
 
-    /*
     let mut position = Position::new();
     loop {
         write!(output, "> ")?;
@@ -64,7 +62,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-    */
 
     Ok(())
 }
@@ -81,33 +78,34 @@ enum ParseError {
     InvalidRow,
     InvalidColumn,
     RowColumnMismatch,
-    InvalidPiece,
+    InvalidProp,
+    PropsMismatch,
 }
 
 fn parse_move(text: &str) -> Result<Move, ParseError> {
-    if text.len() < 3 {
+    if text.len() < 6 {
         return Err(ParseError::TooShort);
     }
-    let chars: Vec<char> = text.chars().take(3).collect();
+    let chars: Vec<char> = text.chars().take(6).collect();
     let spot = parse_spot(chars[0], chars[1])?;
-    let piece = parse_piece(chars[2])?;
+    let piece = parse_piece(chars[2..6].try_into().unwrap())?;
     Ok(Move { spot, piece })
 }
 
 fn parse_spot(r: char, c: char) -> Result<Option<Spot>, ParseError> {
     let row = match r {
-        's' => Some(0),
-        't' => Some(1),
-        'u' => Some(2),
-        'v' => Some(3),
+        'a' => Some(0),
+        'b' => Some(1),
+        'c' => Some(2),
+        'd' => Some(3),
         '.' => None,
         _ => return Err(ParseError::InvalidRow),
     };
     let col = match c {
-        'w' => Some(0),
-        'x' => Some(1),
-        'y' => Some(2),
-        'z' => Some(3),
+        '1' => Some(0),
+        '2' => Some(1),
+        '3' => Some(2),
+        '4' => Some(3),
         '.' => None,
         _ => return Err(ParseError::InvalidColumn),
     };
@@ -118,26 +116,27 @@ fn parse_spot(r: char, c: char) -> Result<Option<Spot>, ParseError> {
     }
 }
 
-fn parse_piece(p: char) -> Result<Option<Piece>, ParseError> {
+fn parse_piece(p: &[char; 4]) -> Result<Option<Piece>, ParseError> {
+    match [
+        parse_prop(p[0])?,
+        parse_prop(p[1])?,
+        parse_prop(p[2])?,
+        parse_prop(p[3])?,
+    ] {
+        [Some(p0), Some(p1), Some(p2), Some(p3)] => {
+            Ok(Some(Piece(p0 | p1 << 1 | p2 << 2 | p3 << 3)))
+        }
+        [None, None, None, None] => Ok(None),
+        _ => Err(ParseError::PropsMismatch),
+    }
+}
+
+fn parse_prop(p: char) -> Result<Option<u8>, ParseError> {
     match p {
-        '0' => Ok(Some(Piece(0x0))),
-        '1' => Ok(Some(Piece(0x1))),
-        '2' => Ok(Some(Piece(0x2))),
-        '3' => Ok(Some(Piece(0x3))),
-        '4' => Ok(Some(Piece(0x4))),
-        '5' => Ok(Some(Piece(0x5))),
-        '6' => Ok(Some(Piece(0x6))),
-        '7' => Ok(Some(Piece(0x7))),
-        '8' => Ok(Some(Piece(0x8))),
-        '9' => Ok(Some(Piece(0x9))),
-        'A' => Ok(Some(Piece(0xA))),
-        'B' => Ok(Some(Piece(0xB))),
-        'C' => Ok(Some(Piece(0xC))),
-        'D' => Ok(Some(Piece(0xD))),
-        'E' => Ok(Some(Piece(0xE))),
-        'F' => Ok(Some(Piece(0xF))),
+        'x' => Ok(Some(0)),
+        'o' => Ok(Some(1)),
         '.' => Ok(None),
-        _ => Err(ParseError::InvalidPiece),
+        _ => Err(ParseError::InvalidProp),
     }
 }
 
@@ -171,6 +170,7 @@ impl Player for Rando {
 }
 
 struct Position {
+    // TODO(mkovaxx): use a more redundant encoding that does less work per move to detect a quarto
     board_pieces: u64,
     board_mask: u64,
     selected_piece: Option<Piece>,
@@ -249,41 +249,59 @@ impl Position {
     /// Print the position
     ///
     /// The format looks like this
-    /// . | w x y z
-    /// --|--------
-    /// s | . . . .
-    /// t | . . . .
-    /// u | . . . .
-    /// v | . . . .
+    /// [ o | 1 2 3 4 ][ x | 1 2 3 4 ][ o | 1 2 3 4 ][ x | 1 2 3 4 ]
+    /// [ --|-------- ][ --|-------- ][ --|-------- ][ --|-------- ]
+    /// [ a | . . o . ][ a | . . o . ][ a | . . x . ][ a | . . x . ]
+    /// [ b | . . . o ][ b | . . . x ][ b | . . . x ][ b | . . . x ]
+    /// [ c | . . . . ][ c | . . . . ][ c | . . . . ][ c | . . . . ]
+    /// [ d | . x . . ][ d | . o . . ][ d | . o . . ][ d | . x . . ]
     ///
-    /// The top-left corner shows the selected piece that the current player must place in a spot.
-    /// Each piece is shown as the hexadecimal digit of its bit pattern.
+    /// The position is shown as slices laid out side-by-side, one for each property.
+    /// The top-left corners are about the selected piece that must be played.
     /// Each spot on the board is identified by a row and a column label.
-    /// Row labels are s-v, and column labels are w-x.
+    /// Row labels are a..d, and column labels are 1..4.
     ///
     /// Empty spots are shown as dots.
     ///
     /// Note that in turn 0 (before the first move), there is no selected piece.
     /// Similarly, there is no selected piece in a draw (when the board is full).
-    /// These states are also indicated by a dot in the top-left corner.
+    /// These states are also indicated by a dot in the top-left corners.
     ///
-    /// A quarto is shown as a * in the top-left corner.
+    /// A quarto is shown as a * in the top-left corners.
     ///
     fn print(&self, writer: &mut dyn io::Write) -> Result<(), io::Error> {
-        let row_headers = ['s', 't', 'u', 'v'];
+        let row_headers = ['a', 'b', 'c', 'd'];
+
         let top_left = if self.is_quarto() {
-            '*'
+            ['*'; 4]
         } else {
-            option_piece_to_char(&self.get_chosen_piece())
+            option_piece_to_chars(&self.get_chosen_piece())
         };
-        writeln!(writer, "{} | w x y z", top_left,)?;
-        writeln!(writer, "--|--------")?;
-        for row in 0..4 {
-            write!(writer, "{} |", row_headers[row])?;
-            for col in 0..4 {
-                let spot = Spot::from_row_col(row as u8, col as u8);
-                write!(writer, " {}", option_piece_to_char(&self.get_piece(spot)))?;
+        for p in 0..4 {
+            write!(writer, "[ {} | 1 2 3 4 ]", top_left[p])?;
+        }
+        writeln!(writer)?;
+
+        for _p in 0..4 {
+            write!(writer, "[ --|-------- ]")?;
+        }
+        writeln!(writer)?;
+
+        for r in 0..4 {
+            let mut row = [['.'; 4]; 4];
+            for c in 0..4 {
+                let spot = Spot::from_row_col(r as u8, c as u8);
+                row[c] = option_piece_to_chars(&self.get_piece(spot));
             }
+
+            for p in 0..4 {
+                write!(writer, "[ {} |", row_headers[r])?;
+                for c in 0..4 {
+                    write!(writer, " {}", row[c][p])?;
+                }
+                write!(writer, " ]")?;
+            }
+
             writeln!(writer)?;
         }
         Ok(())
@@ -417,6 +435,22 @@ fn option_piece_to_char(option_piece: &Option<Piece>) -> char {
     match option_piece {
         Some(piece) => piece_to_char(piece),
         None => '.',
+    }
+}
+
+fn piece_to_chars(piece: &Piece) -> [char; 4] {
+    let mut chars = ['.'; 4];
+    const SYMBOLS: [char; 2] = ['x', 'o'];
+    for p in 0..4 {
+        chars[p] = SYMBOLS[(piece.0 >> p) as usize & 1];
+    }
+    chars
+}
+
+fn option_piece_to_chars(option_piece: &Option<Piece>) -> [char; 4] {
+    match option_piece {
+        Some(piece) => piece_to_chars(piece),
+        None => ['.'; 4],
     }
 }
 
