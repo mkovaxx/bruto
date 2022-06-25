@@ -7,39 +7,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let input = std::io::stdin();
     let mut output = std::io::stdout();
 
-    let mut engine = Rando::new();
+    let mut engine: Box<dyn Engine> = Box::new(Rando::new());
 
-    let mut pcg = Pcg::new();
-
-    let mut noms = [0, 0];
-    let mut den = 0;
-
-    /*
-    const N: u32 = 50;
-
-    for _i in 0..N {
-        let mut history = History::new();
-        let result = random_playout(&mut history, 0, pcg.rand_16_fact(), pcg.rand_16_fact());
-
-        if result == None {
-            for turn in 0..=17 {
-                let pos = history.get_position(turn);
-                pos.print(&mut output).unwrap();
-                println!();
-            }
-        }
-
-        if let Some(turn) = result {
-            noms[turn as usize & 1] += 1;
-        }
-    }
-
-    println!("win:  {}", noms[0] as f64 / N as f64);
-    println!("lose: {}", noms[1] as f64 / N as f64);
-    println!("draw: {}", (N - noms[0] - noms[1]) as f64 / N as f64);
-    */
-
-    let mut position = Position::new();
+    let mut history = History::new();
+    let mut turn = 0;
     loop {
         write!(output, "> ")?;
         output.flush()?;
@@ -50,12 +21,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         match parse_move(&input_line) {
             Ok(mv) => {
-                writeln!(output, "OK: {:?}", mv)?;
-                if let (Some(piece), Some(spot)) = (position.get_chosen_piece(), mv.spot) {
-                    position.place_piece(spot, piece);
+                let result = history.try_move(turn, mv);
+                if result.is_ok() {
+                    // print board after move
+                    turn += 1;
+                    let position = history.get_position(turn);
+                    position.print(&mut output).unwrap();
+                    if position.is_quarto() {
+                        break;
+                    }
+
+                    // query engine for response
+                    let response = engine.play(&history, turn);
+                    writeln!(output, "OK: {}", print_move(&response)).unwrap();
+
+                    history.try_move(turn, response).unwrap();
+
+                    // print board after move
+                    turn += 1;
+                    let position = history.get_position(turn);
+                    position.print(&mut output).unwrap();
+                    if position.is_quarto() {
+                        break;
+                    }
+                } else {
+                    writeln!(output, "ERROR: illegal move")?;
                 }
-                position.choose_piece(mv.piece);
-                position.print(&mut output)?;
             }
             Err(err) => {
                 writeln!(output, "ERROR: {:?}", err)?;
@@ -124,48 +115,178 @@ fn parse_piece(p: &[char; 4]) -> Result<Option<Piece>, ParseError> {
         parse_prop(p[3])?,
     ] {
         [Some(p0), Some(p1), Some(p2), Some(p3)] => {
-            Ok(Some(Piece(p0 | p1 << 1 | p2 << 2 | p3 << 3)))
+            Ok(Some(Piece(p0 | (p1 << 1) | (p2 << 2) | (p3 << 3))))
         }
         [None, None, None, None] => Ok(None),
         _ => Err(ParseError::PropsMismatch),
     }
 }
 
-fn parse_prop(p: char) -> Result<Option<u8>, ParseError> {
+fn parse_prop(p: char) -> Result<Option<i8>, ParseError> {
     match p {
-        'x' => Ok(Some(0)),
-        'o' => Ok(Some(1)),
+        'o' => Ok(Some(0)),
+        'x' => Ok(Some(1)),
         '.' => Ok(None),
         _ => Err(ParseError::InvalidProp),
     }
 }
 
-trait Player {
-    fn start(&mut self) -> Move;
-    fn op_move(&mut self, mv: &Move) -> Move;
+fn print_move(mv: &Move) -> String {
+    option_spot_to_chars(&mv.spot)
+        .iter()
+        .chain(option_piece_to_chars(&mv.piece).iter())
+        .collect()
+}
+
+trait Engine {
+    fn play(&mut self, history: &History, turn: i8) -> Move;
 }
 
 struct Rando {
-    history: History,
-    position: Position,
+    pcg: Pcg,
 }
 
 impl Rando {
     fn new() -> Self {
-        Self {
-            history: History::new(),
-            position: Position::new(),
-        }
+        Self { pcg: Pcg::new() }
     }
 }
 
-impl Player for Rando {
-    fn start(&mut self) -> Move {
+impl Engine for Rando {
+    fn play(&mut self, history: &History, turn: i8) -> Move {
+        let mut response = Move {
+            spot: None,
+            piece: None,
+        };
+        if turn >= 1 && turn <= 16 {
+            // pick a spot
+            let spot_random_source = self.pcg.rand_16_fact();
+            let free_spot_count = 17 - turn as u64;
+            let spot_index = (spot_random_source % free_spot_count) as i8;
+            response.spot = Some(history.get_raw_spot(turn - 1 + spot_index));
+        }
+        if turn >= 0 && turn <= 15 {
+            // pick a piece
+            let piece_random_source = self.pcg.rand_16_fact();
+            let free_piece_count = 16 - turn as u64;
+            let piece_index = (piece_random_source % free_piece_count) as i8;
+            response.piece = Some(history.get_raw_piece(turn + piece_index));
+        }
+        response
+    }
+}
+
+struct Bruto {
+    pcg: Pcg,
+    nodes: Vec<Node>,
+    temperature_factor: f32,
+    playout_batch_size: u32,
+}
+
+struct Node {
+    value: u32,
+    count: u32,
+    child_count: usize,
+    first_child: usize,
+    history: History,
+}
+
+impl Engine for Bruto {
+    fn play(&mut self, history: &History, turn: i8) -> Move {
         todo!()
     }
+}
 
-    fn op_move(&mut self, mv: &Move) -> Move {
-        todo!()
+impl Bruto {
+    fn new() -> Self {
+        Self {
+            pcg: Pcg::new(),
+            nodes: vec![],
+            temperature_factor: 1.4,
+            playout_batch_size: 1000,
+        }
+    }
+
+    fn expand(&mut self, n: usize, turn: i8) -> [u32; 2] {
+        let counters = if self.nodes[n].child_count > 0 {
+            let node = &self.nodes[n];
+            // pick child node to traverse into
+            let ln_n = f32::ln(node.count as f32);
+            let mut best_value = 0.0;
+            let mut best_index = node.first_child;
+            for k in node.first_child..(node.first_child + node.child_count) {
+                let child = &self.nodes[k];
+                let value = child.value as f32 / child.count as f32
+                    + self.temperature_factor * f32::sqrt(ln_n / child.count as f32);
+                if value > best_value {
+                    best_value = value;
+                    best_index = k;
+                }
+            }
+            self.expand(best_index, turn + 1)
+        } else {
+            // add new children for all legal moves
+            let first_child = self.nodes.len();
+            if turn >= 1 {
+                for piece_index in turn..16 {
+                    for spot_index in (turn - 1)..16 {
+                        let mut descendant = self.nodes[n].history.clone();
+                        descendant.swap_pieces(turn, piece_index);
+                        descendant.swap_spots(turn - 1, spot_index);
+                        self.nodes.push(Node {
+                            value: 0,
+                            count: 0,
+                            child_count: 0,
+                            first_child: 0,
+                            history: descendant,
+                        });
+                    }
+                }
+            } else {
+                for piece_index in 0..16 {
+                    let mut descendant = self.nodes[n].history.clone();
+                    descendant.swap_pieces(0, piece_index);
+                    self.nodes.push(Node {
+                        value: 0,
+                        count: 0,
+                        child_count: 0,
+                        first_child: 0,
+                        history: descendant,
+                    });
+                }
+            }
+            let child_count = self.nodes.len() - first_child;
+
+            self.nodes[n].first_child = first_child;
+            self.nodes[n].child_count = child_count;
+
+            // do playouts from the first child
+            let mut counters = [0; 2];
+            for _i in 0..self.playout_batch_size {
+                let result = random_playout(
+                    &mut self.nodes[first_child].history,
+                    turn + 1,
+                    self.pcg.rand_16_fact(),
+                    self.pcg.rand_16_fact(),
+                );
+                match result {
+                    Some(final_turn) => {
+                        counters[final_turn as usize & 1] += 2;
+                    }
+                    None => {
+                        counters[0] += 1;
+                        counters[1] += 1;
+                    }
+                }
+            }
+
+            counters
+        };
+
+        self.nodes[n].value += counters[turn as usize & 1];
+        self.nodes[n].count += self.playout_batch_size;
+
+        counters
     }
 }
 
@@ -187,7 +308,7 @@ impl Position {
 
     fn get_piece(&self, spot: Spot) -> Option<Piece> {
         if (self.board_mask >> (4 * spot.0)) & 0xF != 0 {
-            Some(Piece((self.board_pieces >> (4 * spot.0)) as u8 & 0xF))
+            Some(Piece((self.board_pieces >> (4 * spot.0)) as i8 & 0xF))
         } else {
             None
         }
@@ -290,7 +411,7 @@ impl Position {
         for r in 0..4 {
             let mut row = [['.'; 4]; 4];
             for c in 0..4 {
-                let spot = Spot::from_row_col(r as u8, c as u8);
+                let spot = Spot::from_row_col(r as i8, c as i8);
                 row[c] = option_piece_to_chars(&self.get_piece(spot));
             }
 
@@ -308,9 +429,10 @@ impl Position {
     }
 }
 
+#[derive(Debug, Clone)]
 struct History {
-    pieces_permut: [u8; 16],
-    spots_permut: [u8; 16],
+    pieces_permut: [i8; 16],
+    spots_permut: [i8; 16],
 }
 
 impl History {
@@ -321,45 +443,86 @@ impl History {
         }
     }
 
-    fn try_move(&mut self, turn: u8, mv: Move) -> Result<Valid, Invalid> {
-        todo!()
+    fn try_move(&mut self, turn: i8, mv: Move) -> Result<(), ()> {
+        let mut temp = self.clone();
+
+        if let Some(spot) = mv.spot {
+            if !(turn >= 1 && turn <= 16) {
+                return Err(());
+            }
+            if let Some(spot_index) = (turn - 1..16).find(|i| self.get_raw_spot(*i) == spot) {
+                temp.swap_spots(turn - 1, spot_index as i8);
+            } else {
+                return Err(());
+            }
+        } else {
+            if turn >= 1 && turn <= 16 {
+                return Err(());
+            }
+        }
+
+        if let Some(piece) = mv.piece {
+            if !(turn >= 0 && turn <= 15) {
+                return Err(());
+            }
+            if let Some(piece_index) = (turn..16).find(|i| self.get_raw_piece(*i) == piece) {
+                temp.swap_pieces(turn, piece_index as i8);
+            } else {
+                return Err(());
+            }
+        } else {
+            if turn >= 0 && turn <= 15 && !temp.get_position(turn + 1).is_quarto() {
+                return Err(());
+            }
+        }
+
+        *self = temp;
+        Ok(())
     }
 
-    fn get_piece(&self, turn: u8) -> Option<Piece> {
-        if turn >= 1 && turn <= 16 {
-            Some(Piece(self.pieces_permut[turn as usize - 1]))
+    fn get_piece(&self, turn: i8) -> Option<Piece> {
+        if turn >= 0 && turn <= 15 {
+            Some(Piece(self.pieces_permut[turn as usize]))
         } else {
             None
         }
     }
 
-    fn swap_pieces(&mut self, index_0: u8, index_1: u8) {
+    fn get_raw_piece(&self, index: i8) -> Piece {
+        Piece(self.pieces_permut[index as usize])
+    }
+
+    fn swap_pieces(&mut self, index_0: i8, index_1: i8) {
         let piece_0 = self.pieces_permut[index_0 as usize];
         let piece_1 = self.pieces_permut[index_1 as usize];
         self.pieces_permut[index_0 as usize] = piece_1;
         self.pieces_permut[index_1 as usize] = piece_0;
     }
 
-    fn get_spot(&self, turn: u8) -> Option<Spot> {
-        if turn >= 2 && turn <= 17 {
-            Some(Spot(self.spots_permut[turn as usize - 2]))
+    fn get_spot(&self, turn: i8) -> Option<Spot> {
+        if turn >= 1 && turn <= 16 {
+            Some(Spot(self.spots_permut[turn as usize - 1]))
         } else {
             None
         }
     }
 
-    fn swap_spots(&mut self, index_0: u8, index_1: u8) {
+    fn get_raw_spot(&self, index: i8) -> Spot {
+        Spot(self.spots_permut[index as usize])
+    }
+
+    fn swap_spots(&mut self, index_0: i8, index_1: i8) {
         let spot_0 = self.spots_permut[index_0 as usize];
         let spot_1 = self.spots_permut[index_1 as usize];
         self.spots_permut[index_0 as usize] = spot_1;
         self.spots_permut[index_1 as usize] = spot_0;
     }
 
-    fn get_position(&self, turn: u8) -> Position {
+    fn get_position(&self, turn: i8) -> Position {
         let mut pos = Position::new();
 
-        for i in 0..=turn {
-            if let (Some(piece), Some(spot)) = (pos.get_chosen_piece(), self.get_spot(i)) {
+        for i in 0..turn {
+            if let (Some(piece), Some(spot)) = (self.get_piece(i - 1), self.get_spot(i)) {
                 pos.place_piece(spot, piece);
             }
             pos.choose_piece(self.get_piece(i));
@@ -371,10 +534,10 @@ impl History {
 
 fn random_playout(
     history: &mut History,
-    turn: u8,
+    turn: i8,
     mut piece_random_source: u64,
     mut spot_random_source: u64,
-) -> Option<u8> {
+) -> Option<i8> {
     for i in turn..=17 {
         // TODO(mkovaxx): optimize away unpacking the history by updating the position with just the next move
         let position = history.get_position(i);
@@ -390,14 +553,14 @@ fn random_playout(
         if i <= 15 {
             // pick and commit piece
             let free_piece_count = 16 - i as u64;
-            let piece_index = (piece_random_source % free_piece_count) as u8;
+            let piece_index = (piece_random_source % free_piece_count) as i8;
             piece_random_source /= free_piece_count;
             history.swap_pieces(i, i + piece_index);
         }
         if i >= 1 && i <= 16 {
             // pick and commit spot
             let free_spot_count = 17 - i as u64;
-            let spot_index = (spot_random_source % free_spot_count) as u8;
+            let spot_index = (spot_random_source % free_spot_count) as i8;
             spot_random_source /= free_spot_count;
             history.swap_spots(i - 1, i - 1 + spot_index);
         }
@@ -406,41 +569,12 @@ fn random_playout(
     None
 }
 
-#[derive(Debug, Clone, Copy)]
-struct Piece(u8);
-
-fn piece_to_char(piece: &Piece) -> char {
-    match piece.0 {
-        0x0 => '0',
-        0x1 => '1',
-        0x2 => '2',
-        0x3 => '3',
-        0x4 => '4',
-        0x5 => '5',
-        0x6 => '6',
-        0x7 => '7',
-        0x8 => '8',
-        0x9 => '9',
-        0xA => 'A',
-        0xB => 'B',
-        0xC => 'C',
-        0xD => 'D',
-        0xE => 'E',
-        0xF => 'F',
-        _ => unreachable!(),
-    }
-}
-
-fn option_piece_to_char(option_piece: &Option<Piece>) -> char {
-    match option_piece {
-        Some(piece) => piece_to_char(piece),
-        None => '.',
-    }
-}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Piece(i8);
 
 fn piece_to_chars(piece: &Piece) -> [char; 4] {
     let mut chars = ['.'; 4];
-    const SYMBOLS: [char; 2] = ['x', 'o'];
+    const SYMBOLS: [char; 2] = ['o', 'x'];
     for p in 0..4 {
         chars[p] = SYMBOLS[(piece.0 >> p) as usize & 1];
     }
@@ -454,18 +588,30 @@ fn option_piece_to_chars(option_piece: &Option<Piece>) -> [char; 4] {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-struct Spot(u8);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Spot(i8);
 
 impl Spot {
-    fn from_row_col(row: u8, col: u8) -> Spot {
+    fn from_row_col(row: i8, col: i8) -> Spot {
         Spot(col | (row << 2))
     }
 }
 
-enum Valid {}
+fn spot_to_chars(spot: &Spot) -> [char; 2] {
+    const ROW_SYMBOLS: [char; 4] = ['a', 'b', 'c', 'd'];
+    const COL_SYMBOLS: [char; 4] = ['1', '2', '3', '4'];
+    [
+        ROW_SYMBOLS[(spot.0 >> 2) as usize & 3],
+        COL_SYMBOLS[spot.0 as usize & 3],
+    ]
+}
 
-enum Invalid {}
+fn option_spot_to_chars(option_spot: &Option<Spot>) -> [char; 2] {
+    match option_spot {
+        Some(spot) => spot_to_chars(spot),
+        None => ['.'; 2],
+    }
+}
 
 /// The initial/default state to initialize the Pcg struct with
 const INIT_STATE: u64 = 0x853c_49e6_748f_ea9b;
