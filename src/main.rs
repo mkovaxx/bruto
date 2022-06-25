@@ -7,7 +7,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let input = std::io::stdin();
     let mut output = std::io::stdout();
 
-    let mut engine: Box<dyn Engine> = Box::new(Rando::new());
+    let mut engine: Box<dyn Engine> = Box::new(Bruto::new());
 
     let mut history = History::new();
     let mut turn = 0;
@@ -187,6 +187,7 @@ struct Bruto {
     playout_batch_size: u32,
 }
 
+#[derive(Debug, Clone)]
 struct Node {
     value: u32,
     count: u32,
@@ -197,7 +198,33 @@ struct Node {
 
 impl Engine for Bruto {
     fn play(&mut self, history: &History, turn: i8) -> Move {
-        todo!()
+        self.nodes.clear();
+        self.nodes.push(Node {
+            value: 0,
+            count: 0,
+            child_count: 0,
+            first_child: 0,
+            history: history.clone(),
+        });
+        for _i in 0..10000 {
+            self.expand(0, turn);
+        }
+        // pick best move
+        let node = &self.nodes[0];
+        let mut best_value = 0.0;
+        let mut best_index = node.first_child;
+        for k in node.first_child..(node.first_child + node.child_count) {
+            let child = &self.nodes[k];
+            let value = child.value as f32 / child.count as f32;
+            if value > best_value {
+                best_value = value;
+                best_index = k;
+            }
+        }
+        Move {
+            spot: self.nodes[best_index].history.get_spot(turn),
+            piece: self.nodes[best_index].history.get_piece(turn),
+        }
     }
 }
 
@@ -207,7 +234,7 @@ impl Bruto {
             pcg: Pcg::new(),
             nodes: vec![],
             temperature_factor: 1.4,
-            playout_batch_size: 1000,
+            playout_batch_size: 100000,
         }
     }
 
@@ -233,7 +260,7 @@ impl Bruto {
             let first_child = self.nodes.len();
             if turn >= 1 {
                 for piece_index in turn..16 {
-                    for spot_index in (turn - 1)..16 {
+                    for spot_index in turn - 1..16 {
                         let mut descendant = self.nodes[n].history.clone();
                         descendant.swap_pieces(turn, piece_index);
                         descendant.swap_spots(turn - 1, spot_index);
@@ -264,24 +291,28 @@ impl Bruto {
             self.nodes[n].first_child = first_child;
             self.nodes[n].child_count = child_count;
 
-            // do playouts from the first child
             let mut counters = [0; 2];
-            for _i in 0..self.playout_batch_size {
-                let result = random_playout(
-                    &mut self.nodes[first_child].history,
-                    turn + 1,
-                    self.pcg.rand_16_fact(),
-                    self.pcg.rand_16_fact(),
-                );
-                match result {
-                    Some(final_turn) => {
-                        counters[final_turn as usize & 1] += 2;
-                    }
-                    None => {
-                        counters[0] += 1;
-                        counters[1] += 1;
+            // do playouts from the first child
+            if child_count > 0 {
+                for _i in 0..self.playout_batch_size {
+                    let result = random_playout(
+                        &mut self.nodes[first_child].history,
+                        turn + 1,
+                        self.pcg.rand_16_fact(),
+                        self.pcg.rand_16_fact(),
+                    );
+                    match result {
+                        Some(final_turn) => {
+                            counters[final_turn as usize & 1] += 2;
+                        }
+                        None => {
+                            counters[0] += 1;
+                            counters[1] += 1;
+                        }
                     }
                 }
+                self.nodes[first_child].value += counters[(turn + 1) as usize & 1];
+                self.nodes[first_child].count += self.playout_batch_size;
             }
 
             counters
