@@ -11,45 +11,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut history = History::new();
     let mut turn = 0;
+    let mut human_turn_parity = 0;
     loop {
-        write!(output, "> ")?;
-        output.flush()?;
-        let mut input_line = String::new();
-        let _count = input.read_line(&mut input_line)?;
-        if input_line.starts_with("exit") {
-            break;
-        }
-        match parse_move(&input_line) {
-            Ok(mv) => {
-                let result = history.try_move(turn, mv);
-                if result.is_ok() {
-                    // print board after move
-                    turn += 1;
-                    let position = history.get_position(turn);
-                    position.print(&mut output).unwrap();
-                    if position.is_quarto() {
-                        break;
-                    }
-
-                    // query engine for response
-                    let response = engine.play(&history, turn);
-                    writeln!(output, "OK: {}", print_move(&response)).unwrap();
-
-                    history.try_move(turn, response).unwrap();
-
-                    // print board after move
-                    turn += 1;
-                    let position = history.get_position(turn);
-                    position.print(&mut output).unwrap();
-                    if position.is_quarto() {
-                        break;
-                    }
-                } else {
-                    writeln!(output, "ERROR: illegal move")?;
+        let mv = if turn & 1 == human_turn_parity {
+            // ask human for next move
+            write!(output, "human> ")?;
+            output.flush()?;
+            let mut input_line = String::new();
+            let _count = input.read_line(&mut input_line)?;
+            if input_line == "exit\n" {
+                break;
+            }
+            if input_line == "swap\n" {
+                human_turn_parity ^= 1;
+                continue;
+            }
+            match parse_move(&input_line) {
+                Ok(mv) => mv,
+                Err(err) => {
+                    writeln!(output, "ERROR: {:?}", err)?;
+                    continue;
                 }
             }
-            Err(err) => {
-                writeln!(output, "ERROR: {:?}", err)?;
+        } else {
+            // ask engine for next move
+            write!(output, "engine> ")?;
+            let mv = engine.play(&history, turn);
+            // print move
+            writeln!(output, "{}", print_move(&mv))?;
+            mv
+        };
+        let result = history.try_move(turn, &mv);
+        match result {
+            Ok(_) => {
+                // print board after move
+                turn += 1;
+                let position = history.get_position(turn);
+                position.print(&mut output).unwrap();
+                if position.is_quarto() {
+                    break;
+                }
+            }
+            Err(_) => {
+                writeln!(output, "ERROR: illegal move")?;
             }
         }
     }
@@ -65,7 +69,7 @@ struct Move {
 
 #[derive(Debug)]
 enum ParseError {
-    TooShort,
+    InputTooShort,
     InvalidRow,
     InvalidColumn,
     RowColumnMismatch,
@@ -75,7 +79,7 @@ enum ParseError {
 
 fn parse_move(text: &str) -> Result<Move, ParseError> {
     if text.len() < 6 {
-        return Err(ParseError::TooShort);
+        return Err(ParseError::InputTooShort);
     }
     let chars: Vec<char> = text.chars().take(6).collect();
     let spot = parse_spot(chars[0], chars[1])?;
@@ -443,7 +447,7 @@ impl History {
         }
     }
 
-    fn try_move(&mut self, turn: i8, mv: Move) -> Result<(), ()> {
+    fn try_move(&mut self, turn: i8, mv: &Move) -> Result<(), ()> {
         let mut temp = self.clone();
 
         if let Some(spot) = mv.spot {
