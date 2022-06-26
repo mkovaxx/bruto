@@ -12,7 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut history = History::new();
     let mut turn = 0;
     let mut human_turn_parity = 0;
-    loop {
+    while turn <= 16 {
         let mv = if turn & 1 == human_turn_parity {
             // ask human for next move
             write!(output, "player> ")?;
@@ -219,32 +219,39 @@ impl Engine for Bruto {
     }
 
     fn play(&mut self, history: &History, turn: i8) -> Move {
-        self.nodes.clear();
-        self.nodes.push(Node {
-            value: 0,
-            count: 0,
-            child_count: 0,
-            first_child: 0,
-            history: history.clone(),
-        });
-        for _i in 0..1000 {
-            self.expand(0, turn);
-        }
-        // pick best move
-        let node = &self.nodes[0];
-        let mut best_value = 0.0;
-        let mut best_index = node.first_child;
-        for k in node.first_child..(node.first_child + node.child_count) {
-            let child = &self.nodes[k];
-            let value = child.value as f32 / child.count as f32;
-            if value > best_value {
-                best_value = value;
-                best_index = k;
+        if turn >= 0 && turn <= 16 {
+            self.nodes.clear();
+            self.nodes.push(Node {
+                value: 0,
+                count: 0,
+                child_count: 0,
+                first_child: 0,
+                history: history.clone(),
+            });
+            for _i in 0..1000 {
+                self.expand(0, turn);
             }
-        }
-        Move {
-            spot: self.nodes[best_index].history.get_spot(turn),
-            piece: self.nodes[best_index].history.get_piece(turn),
+            // pick best move
+            let node = &self.nodes[0];
+            let mut best_value = 0.0;
+            let mut best_index = node.first_child;
+            for k in node.first_child..(node.first_child + node.child_count) {
+                let child = &self.nodes[k];
+                let value = child.value as f32 / child.count as f32;
+                if value > best_value {
+                    best_value = value;
+                    best_index = k;
+                }
+            }
+            Move {
+                spot: self.nodes[best_index].history.get_spot(turn),
+                piece: self.nodes[best_index].history.get_piece(turn),
+            }
+        } else {
+            Move {
+                spot: None,
+                piece: None,
+            }
         }
     }
 }
