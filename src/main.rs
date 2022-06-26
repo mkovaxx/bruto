@@ -15,16 +15,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         let mv = if turn & 1 == human_turn_parity {
             // ask human for next move
-            write!(output, "human> ")?;
+            write!(output, "player> ")?;
             output.flush()?;
             let mut input_line = String::new();
             let _count = input.read_line(&mut input_line)?;
-            if input_line == "exit\n" {
-                break;
-            }
-            if input_line == "swap\n" {
-                human_turn_parity ^= 1;
-                continue;
+            match input_line.as_ref() {
+                "exit\n" => {
+                    break;
+                }
+                "swap\n" => {
+                    human_turn_parity ^= 1;
+                    continue;
+                }
+                "play bruto\n" => {
+                    engine = Box::new(Bruto::new());
+                    continue;
+                }
+                "play rando\n" => {
+                    engine = Box::new(Rando::new());
+                    continue;
+                }
+                _ => {}
             }
             match parse_move(&input_line) {
                 Ok(mv) => mv,
@@ -35,7 +46,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         } else {
             // ask engine for next move
-            write!(output, "engine> ")?;
+            write!(output, "{}> ", engine.get_name())?;
+            output.flush()?;
             let mv = engine.play(&history, turn);
             // print move
             writeln!(output, "{}", print_move(&mv))?;
@@ -143,6 +155,7 @@ fn print_move(mv: &Move) -> String {
 }
 
 trait Engine {
+    fn get_name(&self) -> &'static str;
     fn play(&mut self, history: &History, turn: i8) -> Move;
 }
 
@@ -157,6 +170,10 @@ impl Rando {
 }
 
 impl Engine for Rando {
+    fn get_name(&self) -> &'static str {
+        "rando"
+    }
+
     fn play(&mut self, history: &History, turn: i8) -> Move {
         let mut response = Move {
             spot: None,
@@ -197,6 +214,10 @@ struct Node {
 }
 
 impl Engine for Bruto {
+    fn get_name(&self) -> &'static str {
+        "bruto"
+    }
+
     fn play(&mut self, history: &History, turn: i8) -> Move {
         self.nodes.clear();
         self.nodes.push(Node {
@@ -206,7 +227,7 @@ impl Engine for Bruto {
             first_child: 0,
             history: history.clone(),
         });
-        for _i in 0..10000 {
+        for _i in 0..1000 {
             self.expand(0, turn);
         }
         // pick best move
@@ -233,8 +254,8 @@ impl Bruto {
         Self {
             pcg: Pcg::new(),
             nodes: vec![],
-            temperature_factor: 1.4,
-            playout_batch_size: 100000,
+            temperature_factor: 0.5,
+            playout_batch_size: 1000,
         }
     }
 
@@ -247,8 +268,12 @@ impl Bruto {
             let mut best_index = node.first_child;
             for k in node.first_child..(node.first_child + node.child_count) {
                 let child = &self.nodes[k];
-                let value = child.value as f32 / child.count as f32
-                    + self.temperature_factor * f32::sqrt(ln_n / child.count as f32);
+                let value = if child.count > 0 {
+                    child.value as f32 / child.count as f32
+                        + self.temperature_factor * f32::sqrt(ln_n / child.count as f32)
+                } else {
+                    f32::INFINITY
+                };
                 if value > best_value {
                     best_value = value;
                     best_index = k;
@@ -256,14 +281,33 @@ impl Bruto {
             }
             self.expand(best_index, turn + 1)
         } else {
-            // add new children for all legal moves
-            let first_child = self.nodes.len();
-            if turn >= 1 {
-                for piece_index in turn..16 {
-                    for spot_index in turn - 1..16 {
+            if self.nodes[n].history.get_position(turn).is_quarto() {
+                // terminal state: win/loss
+                let mut counters = [0; 2];
+                counters[turn as usize & 1] += 2 * self.playout_batch_size;
+                counters
+            } else {
+                // add new children for all legal moves
+                let first_child = self.nodes.len();
+                if turn >= 1 {
+                    for piece_index in turn..16 {
+                        for spot_index in turn - 1..16 {
+                            let mut descendant = self.nodes[n].history.clone();
+                            descendant.swap_pieces(turn, piece_index);
+                            descendant.swap_spots(turn - 1, spot_index);
+                            self.nodes.push(Node {
+                                value: 0,
+                                count: 0,
+                                child_count: 0,
+                                first_child: 0,
+                                history: descendant,
+                            });
+                        }
+                    }
+                } else {
+                    for piece_index in 0..16 {
                         let mut descendant = self.nodes[n].history.clone();
-                        descendant.swap_pieces(turn, piece_index);
-                        descendant.swap_spots(turn - 1, spot_index);
+                        descendant.swap_pieces(0, piece_index);
                         self.nodes.push(Node {
                             value: 0,
                             count: 0,
@@ -273,49 +317,41 @@ impl Bruto {
                         });
                     }
                 }
-            } else {
-                for piece_index in 0..16 {
-                    let mut descendant = self.nodes[n].history.clone();
-                    descendant.swap_pieces(0, piece_index);
-                    self.nodes.push(Node {
-                        value: 0,
-                        count: 0,
-                        child_count: 0,
-                        first_child: 0,
-                        history: descendant,
-                    });
-                }
-            }
-            let child_count = self.nodes.len() - first_child;
+                let child_count = self.nodes.len() - first_child;
 
-            self.nodes[n].first_child = first_child;
-            self.nodes[n].child_count = child_count;
+                self.nodes[n].first_child = first_child;
+                self.nodes[n].child_count = child_count;
 
-            let mut counters = [0; 2];
-            // do playouts from the first child
-            if child_count > 0 {
-                for _i in 0..self.playout_batch_size {
-                    let result = random_playout(
-                        &mut self.nodes[first_child].history,
-                        turn + 1,
-                        self.pcg.rand_16_fact(),
-                        self.pcg.rand_16_fact(),
-                    );
-                    match result {
-                        Some(final_turn) => {
-                            counters[final_turn as usize & 1] += 2;
-                        }
-                        None => {
-                            counters[0] += 1;
-                            counters[1] += 1;
+                let mut counters = [0; 2];
+                // do playouts from the first child
+                if child_count > 0 {
+                    for _i in 0..self.playout_batch_size {
+                        let result = random_playout(
+                            &mut self.nodes[first_child].history,
+                            turn + 1,
+                            self.pcg.rand_16_fact(),
+                            self.pcg.rand_16_fact(),
+                        );
+                        match result {
+                            Some(final_turn) => {
+                                counters[final_turn as usize & 1] += 2;
+                            }
+                            None => {
+                                counters[0] += 1;
+                                counters[1] += 1;
+                            }
                         }
                     }
+                    self.nodes[first_child].value += counters[(turn + 1) as usize & 1];
+                    self.nodes[first_child].count += 2 * self.playout_batch_size;
+                } else {
+                    // terminal state: draw
+                    counters[0] = self.playout_batch_size;
+                    counters[1] = self.playout_batch_size;
                 }
-                self.nodes[first_child].value += counters[(turn + 1) as usize & 1];
-                self.nodes[first_child].count += self.playout_batch_size;
-            }
 
-            counters
+                counters
+            }
         };
 
         self.nodes[n].value += counters[turn as usize & 1];
