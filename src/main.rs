@@ -606,7 +606,7 @@ impl History {
 
     fn print_free_pieces(&self, turn: i8, writer: &mut dyn io::Write) -> Result<(), io::Error> {
         write!(writer, " ")?;
-        if turn > 0 {
+        if turn >= 1 && turn <= 15 {
             write!(writer, "[")?;
             for c in piece_to_chars(&self.get_raw_piece(turn - 1)) {
                 write!(writer, "{}", c)?;
