@@ -59,7 +59,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // print board after move
                 turn += 1;
                 let position = history.get_position(turn);
-                position.print(&mut output).unwrap();
+                writeln!(output)?;
+                position.print(&mut output)?;
+                writeln!(output)?;
+                if !position.is_quarto() {
+                    history.print_free_pieces(turn, &mut output)?;
+                    writeln!(output)?;
+                }
                 if position.is_quarto() {
                     break;
                 }
@@ -448,44 +454,32 @@ impl Position {
     /// Print the position
     ///
     /// The format looks like this
-    /// [ o | 1 2 3 4 ][ x | 1 2 3 4 ][ o | 1 2 3 4 ][ x | 1 2 3 4 ]
-    /// [ --|-------- ][ --|-------- ][ --|-------- ][ --|-------- ]
-    /// [ a | . . o . ][ a | . . o . ][ a | . . x . ][ a | . . x . ]
-    /// [ b | . . . o ][ b | . . . x ][ b | . . . x ][ b | . . . x ]
-    /// [ c | . . . . ][ c | . . . . ][ c | . . . . ][ c | . . . . ]
-    /// [ d | . x . . ][ d | . o . . ][ d | . o . . ][ d | . x . . ]
+    ///      1 2 3 4   1 2 3 4   1 2 3 4   1 2 3 4
+    ///
+    ///  a   . . o .   . . o .   . . x .   . . x .
+    ///  b   . . . o   . . . x   . . . x   . . . x
+    ///  c   . . . .   . . . .   . . . .   . . . .
+    ///  d   . x . .   . o . .   . o . .   . x . .
     ///
     /// The position is shown as slices laid out side-by-side, one for each property.
-    /// The top-left corners are about the selected piece that must be played.
     /// Each spot on the board is identified by a row and a column label.
     /// Row labels are a..d, and column labels are 1..4.
     ///
     /// Empty spots are shown as dots.
     ///
-    /// Note that in turn 0 (before the first move), there is no selected piece.
-    /// Similarly, there is no selected piece in a draw (when the board is full).
-    /// These states are also indicated by a dot in the top-left corners.
-    ///
-    /// A quarto is shown as a * in the top-left corners.
+    /// A quarto is shown as a * in the top-left corner.
     ///
     fn print(&self, writer: &mut dyn io::Write) -> Result<(), io::Error> {
         let row_headers = ['a', 'b', 'c', 'd'];
 
-        let top_left = if self.is_quarto() {
-            ['*'; 4]
-        } else {
-            option_piece_to_chars(&self.get_chosen_piece())
-        };
-        for p in 0..4 {
-            write!(writer, "[ {} | 1 2 3 4 ]", top_left[p])?;
-        }
-        writeln!(writer)?;
-
+        let top_left = if self.is_quarto() { '*' } else { ' ' };
+        write!(writer, " {} ", top_left)?;
         for _p in 0..4 {
-            write!(writer, "[ --|-------- ]")?;
+            write!(writer, "  1 2 3 4")?;
         }
         writeln!(writer)?;
 
+        writeln!(writer)?;
         for r in 0..4 {
             let mut row = [['.'; 4]; 4];
             for c in 0..4 {
@@ -494,13 +488,14 @@ impl Position {
             }
 
             for p in 0..4 {
-                write!(writer, "[ {} |", row_headers[r])?;
+                if p == 0 {
+                    write!(writer, " {}  ", row_headers[r])?;
+                }
                 for c in 0..4 {
                     write!(writer, " {}", row[c][p])?;
                 }
-                write!(writer, " ]")?;
+                write!(writer, " ")?;
             }
-
             writeln!(writer)?;
         }
         Ok(())
@@ -607,6 +602,25 @@ impl History {
         }
 
         pos
+    }
+
+    fn print_free_pieces(&self, turn: i8, writer: &mut dyn io::Write) -> Result<(), io::Error> {
+        write!(writer, " ")?;
+        if turn > 0 {
+            write!(writer, "[")?;
+            for c in piece_to_chars(&self.get_raw_piece(turn - 1)) {
+                write!(writer, "{}", c)?;
+            }
+            write!(writer, "]")?;
+        }
+        for i in turn..16 {
+            write!(writer, " ")?;
+            for c in piece_to_chars(&self.get_raw_piece(i)) {
+                write!(writer, "{}", c)?;
+            }
+        }
+        writeln!(writer)?;
+        Ok(())
     }
 }
 
