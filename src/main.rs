@@ -9,7 +9,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut engine: Box<dyn Engine> = Box::new(Bruto::new());
 
-    let mut history = History::new();
+    let mut history = {
+        let mut pcg = Pcg::new_from_time();
+        random_history(pcg.rand_16_fact(), pcg.rand_16_fact())
+    };
+
     let mut turn = 0;
     let mut human_turn_parity = 0;
     while turn <= 16 {
@@ -661,6 +665,24 @@ fn random_playout(
     None
 }
 
+fn random_history(mut piece_random_source: u64, mut spot_random_source: u64) -> History {
+    let mut history = History::new();
+    for i in 0..16 {
+        // pick and commit piece
+        let free_piece_count = 16 - i as u64;
+        let piece_index = (piece_random_source % free_piece_count) as i8;
+        piece_random_source /= free_piece_count;
+        history.swap_pieces(i, i + piece_index);
+
+        // pick and commit spot
+        let free_spot_count = 16 - i as u64;
+        let spot_index = (spot_random_source % free_spot_count) as i8;
+        spot_random_source /= free_spot_count;
+        history.swap_spots(i, i + spot_index);
+    }
+    history
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Piece(i8);
 
@@ -731,6 +753,17 @@ impl Pcg {
     fn new() -> Pcg {
         Pcg {
             state: INIT_STATE,
+            inc: INIT_INC,
+        }
+    }
+
+    fn new_from_time() -> Pcg {
+        use std::time::SystemTime;
+        let time = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap();
+        Pcg {
+            state: time.as_nanos() as u64,
             inc: INIT_INC,
         }
     }
