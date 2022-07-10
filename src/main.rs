@@ -303,23 +303,36 @@ impl Bruto {
                 let mut counters = [0; 2];
                 counters[turn as usize & 1] += 2 * self.playout_batch_size;
                 counters
+            } else if turn >= 17 {
+                // terminal state: draw
+                [self.playout_batch_size; 2]
             } else {
                 // add new children for all legal moves
                 let first_child = self.nodes.len();
                 if turn >= 1 {
-                    for piece_index in turn..16 {
-                        for spot_index in turn - 1..16 {
-                            let mut descendant = self.nodes[n].history.clone();
-                            descendant.swap_pieces(turn, piece_index);
-                            descendant.swap_spots(turn - 1, spot_index);
-                            self.nodes.push(Node {
-                                value: 0,
-                                count: 0,
-                                child_count: 0,
-                                first_child: 0,
-                                history: descendant,
-                            });
+                    if turn < 16 {
+                        for piece_index in turn..16 {
+                            for spot_index in turn - 1..16 {
+                                let mut descendant = self.nodes[n].history.clone();
+                                descendant.swap_pieces(turn, piece_index);
+                                descendant.swap_spots(turn - 1, spot_index);
+                                self.nodes.push(Node {
+                                    value: 0,
+                                    count: 0,
+                                    child_count: 0,
+                                    first_child: 0,
+                                    history: descendant,
+                                });
+                            }
                         }
+                    } else {
+                        self.nodes.push(Node {
+                            value: 0,
+                            count: 0,
+                            child_count: 0,
+                            first_child: 0,
+                            history: self.nodes[n].history.clone(),
+                        });
                     }
                 } else {
                     for piece_index in 0..16 {
@@ -361,10 +374,6 @@ impl Bruto {
                     }
                     self.nodes[first_child].value += counters[(turn + 1) as usize & 1];
                     self.nodes[first_child].count += 2 * self.playout_batch_size;
-                } else {
-                    // terminal state: draw
-                    counters[0] = self.playout_batch_size;
-                    counters[1] = self.playout_batch_size;
                 }
 
                 counters
